@@ -1,0 +1,149 @@
+# Maintainer Room: a contribution-rules desk for a busy open-source repo.
+#
+# Creates two reviewer agents (Claude Code + Codex) and three linked rooms.
+# The Gatekeeper is a custom protocol agent (gatekeeper/ in this repo):
+# register it first with `python -m gatekeeper register`, then pick it in the
+# `gatekeeper` field when you run this template.
+#
+# Format follows examples/agent-templates/support-desk.template.yaml in
+# sandbox-quantum/switch (template format version 1).
+version: 1
+
+params:
+  team:
+    type: string
+    description: Prefix for every name this creates
+    pattern: "[a-z][a-z0-9-]*"
+    default: mroom
+  gatekeeper:
+    type: agent
+    description: The Gatekeeper agent you registered with `python -m gatekeeper register`
+  repo:
+    type: string
+    description: The GitHub repo the room looks after (owner/name)
+  provider_a:
+    type: provider
+    description: Reviewer A's coding agent
+    default: [claude, codex, opencode]
+    input: advanced
+  provider_b:
+    type: provider
+    description: Reviewer B's coding agent, ideally a different model from A
+    default: [codex, opencode, claude]
+    input: advanced
+  location:
+    type: location
+    description: The machine the reviewers run on
+    default: local
+    input: advanced
+  directory:
+    type: directory
+    description: Each reviewer's working directory, a folder of its own
+    default: "{$agents_dir}/{agent}"
+    input: advanced
+  bridge:
+    type: bridge
+    description: Where the rooms are mirrored (Mattermost when you run Switch locally)
+    default: [$first]
+
+agents:
+  - name: "{team}-reviewer-claude"
+    description: Reviewer A. Runs the tests on each PR and judges real, low-effort or broken
+    addressing: owner-agents
+    provider: "{provider_a}"
+    location: "{location}"
+    directory: "{directory}"
+    instructions: &review |
+      You review pull requests for {repo}. The Gatekeeper sends you one PR at
+      a time in the review room. You answer only the Gatekeeper and maintainers.
+
+      For each PR:
+      1. Say in one line what you are about to do.
+      2. Check the PR out with the command the Gatekeeper gives you, in your
+         own working directory. Never push, comment on GitHub, or merge.
+      3. Run the project's tests, or the closest thing it has. Report the
+         exact command and whether it passed. Never guess a result you did
+         not run.
+      4. Pick one verdict:
+         real = changes behaviour or adds something useful, and works.
+         low-effort = only typos, formatting, renames or comments, or
+           generated code nobody checked.
+         broken = does not build, tests fail, or misses what the issue asked.
+      5. Give at most 5 bullets of evidence (file:line, test output).
+      6. End with exactly one line:
+         VERDICT: real|low-effort|broken - PR #<number> - <one-line reason>
+
+      The other reviewer is a different model and reviews the same PR on its
+      own. Don't wait for it and don't change your verdict to match it.
+  - name: "{team}-reviewer-codex"
+    description: Reviewer B. Reviews the same PR independently with a different model
+    addressing: owner-agents
+    provider: "{provider_b}"
+    location: "{location}"
+    directory: "{directory}"
+    instructions: *review
+
+group:
+  name: "{team} maintainer room"
+  description: Contribution rules for {repo}, run by agents, approved by people
+
+rooms:
+  - name: "{team}-maintainers"
+    description: Proposals from the Gatekeeper. Maintainers reply approve <id> or reject <id>
+    bridge: "{bridge}"
+    agents: ["{gatekeeper}"]
+    users: ["{$creator}"]
+    instructions: |
+      Contribution rules for {repo}:
+      - One person per issue. The first person to ask gets it, if eligible.
+      - Eligible = fewer than 5 open pull requests and a stated plan.
+      - A pull request must say `Closes #<issue>` and its author must hold that issue.
+      - No activity for 48 hours: the issue may be offered to the next person.
+      - Low-effort pull requests (typos, formatting, unreviewed AI output) are not merged.
+      Nothing is written to GitHub until a maintainer replies `approve <id>`.
+    roles:
+      - name: gatekeeper
+        instructions: Apply the contribution rules, post proposals, act on GitHub only after approval.
+        exclusive: true
+    docs:
+      - name: assignment-ledger
+        description: Every assignment and review decision, who approved it and why
+        instructions: Only the Gatekeeper edits this document.
+        content: |
+          # Assignment ledger
+
+          Filled in by the Gatekeeper after each approved decision.
+    kickoff: |
+      @{gatekeeper} this is the maintainers room for {repo}. Post a proposal
+      here for every assignment request and new pull request.
+
+  - name: "{team}-reviews"
+    description: Where the reviewers work each pull request the Gatekeeper sends
+    bridge: "{bridge}"
+    agents: ["{gatekeeper}", "{team}-reviewer-claude", "{team}-reviewer-codex"]
+    users: ["{$creator}"]
+    roles:
+      - name: reviewer
+        instructions: Review the pull request you are sent and end with one VERDICT line.
+        exclusive: false
+    kickoff: |
+      @{team}-reviewer-claude @{team}-reviewer-codex this is the review room
+      for {repo}. Say hello in one line each. The Gatekeeper will send you pull
+      requests here; end every review with the VERDICT line.
+
+  - name: "{team}-contributors"
+    description: Contributors ask the Gatekeeper which issues are free
+    bridge: "{bridge}"
+    agents: ["{gatekeeper}"]
+    users: ["{$creator}"]
+    kickoff: |
+      @{gatekeeper} this is the contributors room. Answer "free issues" and
+      point people to the rules.
+
+links:
+  - from: "{team}-maintainers"
+    to: "{team}-reviews"
+    label: reviews
+  - from: "{team}-maintainers"
+    to: "{team}-contributors"
+    label: contributors
