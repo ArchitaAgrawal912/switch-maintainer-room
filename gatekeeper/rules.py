@@ -180,3 +180,47 @@ def propose_assignment(
     rank = candidates.index(winner)
     lead = "first to ask" if rank == 0 else f"first eligible ({rank} earlier request{'s' if rank > 1 else ''} did not qualify)"
     return Proposal(issue, winner.login, f"{lead}: {winner.reason}", candidates)
+
+
+def linked_issue(pr_body: str) -> int | None:
+    m = _CLOSES.search(pr_body or "")
+    return int(m.group(1)) if m else None
+
+
+def check_pr_eligible(pr: PullRequest, assignments: dict[int, str]) -> PrCheck:
+    """A PR is reviewable when it links an issue that its author holds."""
+    number = linked_issue(pr.body)
+    if number is None:
+        return PrCheck(False, None, "the description has no `Closes #<issue>` line")
+    holder = assignments.get(number)
+    if holder is None:
+        return PrCheck(False, number, f"issue #{number} is not assigned to anyone")
+    if holder.lower() != pr.author.lower():
+        return PrCheck(False, number, f"issue #{number} is assigned to {holder}, not {pr.author}")
+    return PrCheck(True, number, f"links #{number}, which is assigned to {pr.author}")
+
+
+def find_stale(assignments: list[Assignment], now: datetime, hours: int = 48) -> list[Assignment]:
+    """Assignments with no activity from the assignee for `hours`."""
+    limit = timedelta(hours=hours)
+    return [a for a in assignments if now - max(a.last_activity, a.assigned_at) >= limit]
+
+
+# ------------------------------------------------------------- PR reviews
+
+VERDICTS = ("real", "low-effort", "broken")
+
+
+def normalize_verdict(text: str) -> str | None:
+    t = (text or "").strip().lower().replace("_", "-").replace(" ", "-")
+    if t in ("low-effort", "loweffort", "low"):
+        return "low-effort"
+    return t if t in VERDICTS else None
+
+
+def combine_verdicts(verdicts: dict[str, str]) -> tuple[bool, str | None]:
+    """(agree, verdict). agree is True only when every reviewer said the same."""
+    values = set(verdicts.values())
+    if len(values) == 1:
+        return True, values.pop()
+    return False, None
