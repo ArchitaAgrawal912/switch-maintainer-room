@@ -96,5 +96,54 @@ async def setup(cfg: Config, sw: SwitchClient, prefix: str = "mroom") -> dict[st
         except RuntimeError as e:
             log.info("link %s -> %s: %s", src, dst, str(e)[:160])
 
+    await attach_references(cfg, sw, ids)
+    await save_template(sw)
     _set_env(ids)
     return ids
+
+
+async def attach_references(cfg: Config, sw: SwitchClient, ids: dict[str, str]) -> None:
+    """GitHub references so every agent in the room can find the repos it works on."""
+    refs = [
+        (f"{cfg.repo}", f"https://github.com/{cfg.repo}",
+         "The repo this room looks after: its issues, pull requests and the Gatekeeper's replies.",
+         "Issues labelled for contributors live here. Check out pull requests from here to review them.",
+         ["MAINTAINERS_ROOM_ID", "REVIEWS_ROOM_ID", "CONTRIBUTORS_ROOM_ID"]),
+        (f"{cfg.count_prs_repo} (upstream)", f"https://github.com/{cfg.count_prs_repo}",
+         "The upstream project whose contribution rules this room enforces.",
+         "Open pull requests per contributor are counted here. Read CONTRIBUTING.md for the rules behind each decision.",
+         ["MAINTAINERS_ROOM_ID", "REVIEWS_ROOM_ID"]),
+    ]
+    for name, url, desc, how, rooms in refs:
+        attached_somewhere = False
+        targets = []
+        for key in rooms:
+            info = await sw.op("connect_to_room", room_id=ids[key], include_general_instructions=False)
+            sw._active_room = ids[key]
+            names = {r.get("name") for r in (info or {}).get("references") or []}
+            attached_somewhere |= name in names
+            if name not in names:
+                targets.append(ids[key])
+        if not targets:
+            log.info("reference %s already attached", name)
+            continue
+        try:
+            ref = await sw.op("create_reference", type="github", name=name, description=desc, instructions=how,
+                              value={"urls": [url]}, read_visibility="public", write_visibility="private")
+            for room in targets:
+                await sw.op("attach_reference_to_room", room_id=room, reference_id=ref["id"])
+            log.info("reference %s attached to %d room(s)", name, len(targets))
+        except RuntimeError as e:
+            log.warning("reference %s: %s", name, str(e)[:200])
+
+
+async def save_template(sw: SwitchClient) -> None:
+    """Publish the room template so it shows on Switch Console's Templates page."""
+    path = ROOT / "templates" / "maintainer-room.template.yaml"
+    try:
+        res = await sw.op("save_template", name="maintainer-room",
+                          description="Maintainer Room: Gatekeeper + two reviewers in three linked rooms",
+                          yaml=path.read_text("utf-8"), visibility="shared", bypass_warnings=False)
+        log.info("template saved (%s, warnings: %s)", res.get("kind"), res.get("warnings") or "none")
+    except RuntimeError as e:
+        log.info("template: %s", str(e)[:200])
