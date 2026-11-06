@@ -81,7 +81,7 @@ async def cmd_scan(cfg: config.Config) -> None:
 
 def _quiet_resets(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """Windows logs a traceback when a server closes an idle keep-alive socket. Harmless."""
-    if isinstance(context.get("exception"), ConnectionResetError):
+    if isinstance(context.get("exception"), ConnectionError):
         return
     loop.default_exception_handler(context)
 
@@ -94,16 +94,20 @@ async def cmd_run(cfg: config.Config) -> None:
     gk = Gatekeeper(cfg, sw, gh, State(cfg.state_file))
     rooms = [r for r in (cfg.maintainers_room, cfg.reviews_room, cfg.contributors_room) if r]
 
+    async def take_role() -> None:
+        """The exclusive role is a lease: a dropped socket releases it, so take it on every connect."""
+        try:
+            await sw.room_op(cfg.maintainers_room, "assume_role", role="gatekeeper")
+            logging.info("holding the exclusive 'gatekeeper' role")
+        except Exception as e:
+            logging.info("assume_role skipped: %s", str(e)[:200])
+
+    sw.on_connect = take_role
     listener = asyncio.create_task(sw.listen(gk.on_message, rooms))
     try:
         await asyncio.wait_for(sw.connected.wait(), timeout=20)
     except asyncio.TimeoutError:
         logging.warning("no connection_state after 20s; continuing (check SWITCH_URL and room ids)")
-    try:
-        await sw.room_op(cfg.maintainers_room, "assume_role", role="gatekeeper")
-        logging.info("holding the exclusive 'gatekeeper' role")
-    except Exception as e:
-        logging.info("assume_role skipped: %s", str(e)[:200])
     await gk.say(cfg.maintainers_room, f"Gatekeeper online. Watching `{cfg.repo}` issues labelled `{cfg.issue_label}` and its pull requests.")
     await gk.sync_ledger()
     poller = asyncio.create_task(gk.poll_forever())

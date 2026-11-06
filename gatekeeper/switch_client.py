@@ -117,6 +117,7 @@ class SwitchClient:
         self.connected = asyncio.Event()
         self._room_lock = asyncio.Lock()
         self._active_room: str | None = None
+        self.on_connect: Callable[[], Awaitable[None]] | None = None
 
     @classmethod
     def from_file(cls, base: str, path: Path) -> "SwitchClient":
@@ -217,7 +218,10 @@ class SwitchClient:
                     self.generation = data.get("generation", self.generation)
                     self.cursor = data.get("cursor", self.cursor)
                     self.rooms = data.get("rooms", self.rooms)
+                    self._active_room = None  # a new socket starts without a connected room
                     self.connected.set()
+                    if self.on_connect:  # e.g. re-take the role lease a lapse released
+                        asyncio.create_task(self.on_connect())
                     log.info("connected: rooms=%s cursor=%s generation=%s", self.rooms, self.cursor, self.generation)
                     continue
                 if kind == "gap":
