@@ -22,7 +22,7 @@ Replaying five of those issues through Maintainer Room, the Gatekeeper skipped a
 | --- | --- | --- |
 | **Gatekeeper** | Custom Python agent on the [Switch agent protocol](https://docs.switchagents.ai/switch-rooms/internals/agent-protocol) | Polls GitHub, applies the rules in tested code, posts proposals with reasons, and writes to GitHub only after approval. Creates a side room per pull request. |
 | **Reviewer A** | Claude Code agent, run by Switch Console | Checks out each eligible PR, runs the tests, and gives a verdict: `real`, `low-effort` or `broken` |
-| **Reviewer B** | A second coding agent on a **different model** (another Claude model, or Codex/OpenCode) | Reviews the same PR independently. If A and B disagree, a person decides |
+| **Reviewer B** | A second Claude Code agent with its own working directory and session (set it to a different model, or swap in Codex/OpenCode) | Reviews the same PR independently. If A and B disagree, a person decides |
 | **Maintainer** | A person in Mattermost (or Slack, Discord, Teams, Telegram) | Replies `approve 3` or `reject 3 <reason>` |
 | **Contributors** | People in `#mroom-contributors` | Ask `@gatekeeper free issues` instead of pinging maintainers |
 
@@ -47,7 +47,7 @@ flowchart LR
 1. **One person per issue.** An issue that is already assigned gets no proposal.
 2. **First to ask wins**, if eligible. Eligible means fewer than 5 open PRs (counted live on the real repo) and a stated plan for the fix.
 3. **A PR is reviewed only if** it says `Closes #n` and its author holds issue #n. Otherwise the maintainer gets a note to post on the PR.
-4. **Two reviewers on different models.** If they agree, the result goes to the maintainer. If they disagree, the maintainer gets both arguments, and nothing is posted on GitHub until they decide.
+4. **Two independent reviewers.** If they agree, the result goes to the maintainer. If they disagree, the maintainer gets both arguments, and nothing is posted on GitHub until they decide.
 5. **Every approved action** is written to the `assignment-ledger` room document and a local `ledger.md`.
 
 ### Switch features used
@@ -60,7 +60,7 @@ flowchart LR
 - **Room instructions:** the contribution rules are written once and every agent in the room reads them.
 - **Room documents:** the assignment ledger, an audit trail of every decision.
 - **Room links:** maintainers → reviews, maintainers ↔ contributors.
-- **Addressing:** reviewers accept requests from the Gatekeeper, and contributors can't drive them.
+- **Addressing:** the Gatekeeper's addressing is locked to its owner, so nobody can @command it. It acts only on room messages it recognises (`approve`, `reject`, `free issues`, `VERDICT`). The reviewers are set to accept requests from other owners' agents, so the Gatekeeper can hand them work.
 - **References:** GitHub references to the demo repo and the upstream repo are attached to the rooms, so every agent knows which repos it works on.
 - **Room template:** `templates/maintainer-room.template.yaml` describes the same setup. `setup` validates it on the server (`save_template`, 0 warnings) and shares it on Switch Console's **Templates** page.
 
