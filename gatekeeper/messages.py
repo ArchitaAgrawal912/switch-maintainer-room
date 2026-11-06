@@ -72,7 +72,8 @@ def review_request(pr: PullRequest, reviewers: list[str], repo: str) -> str:
     mentions = " ".join(f"@{r}" for r in reviewers)
     return (
         f"{mentions} please review **PR #{pr.number}** *{pr.title}* by {pr.author}: {pr.url}\n"
-        f"Check it out with `git fetch https://github.com/{repo} pull/{pr.number}/head:pr-{pr.number} && git checkout pr-{pr.number}`, "
+        f"Check it out with `git clone https://github.com/{repo} pr-{pr.number} && cd pr-{pr.number} && "
+        f"git fetch origin pull/{pr.number}/head:pr-{pr.number} && git checkout pr-{pr.number}`, "
         "run the tests, and read the diff.\n"
         f"End your reply with exactly one line: `VERDICT: real|low-effort|broken - PR #{pr.number} - <one-line reason>`"
     )

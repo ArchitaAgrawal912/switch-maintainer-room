@@ -79,7 +79,15 @@ async def cmd_scan(cfg: config.Config) -> None:
     await gh.close()
 
 
+def _quiet_resets(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Windows logs a traceback when a server closes an idle keep-alive socket. Harmless."""
+    if isinstance(context.get("exception"), ConnectionResetError):
+        return
+    loop.default_exception_handler(context)
+
+
 async def cmd_run(cfg: config.Config) -> None:
+    asyncio.get_running_loop().set_exception_handler(_quiet_resets)
     _need(cfg.maintainers_room, "MAINTAINERS_ROOM_ID")
     sw = SwitchClient.from_file(cfg.switch_url, cfg.agent_file)
     gh = GitHub(cfg.github_token, _need(cfg.repo, "GITHUB_REPO"), dry_run=cfg.dry_run)
