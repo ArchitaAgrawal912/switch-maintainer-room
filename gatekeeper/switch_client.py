@@ -158,3 +158,85 @@ class SwitchClient:
         if r.status_code >= 300:
             raise RuntimeError(f"op {name} -> {r.status_code}: {r.text[:300]}")
         return r.json().get("result")
+
+    # ---- WebSocket
+    def _ws_url(self, rooms: list[str]) -> str:
+        # scope=all: hear every room the agent is in; filter=all: hear unaddressed messages too
+        # (the maintainer's "approve 3" needn't @mention the Gatekeeper).
+        q: dict[str, Any] = {"connection_id": self.connection_id, "scope": "all", "filter": "all", "client": "maintainer-room"}
+        if self.cursor is not None:
+            q["start_from"] = self.cursor
+        if self.generation is not None:
+            q["expected_generation"] = self.generation
+        scheme = "wss" if self.base.startswith("https") else "ws"
+        host = self.base.split("://", 1)[1]
+        return f"{scheme}://{host}/agents/{self.agent_id}/connection/ws?{urlencode(q)}"
+
+    async def listen(self, on_message: Callable[[Message], Awaitable[None]], rooms: list[str] | None = None) -> None:
+        """Connect, keep the heartbeat, hand `message` events to a worker. Reconnects."""
+        queue: asyncio.Queue[Message] = asyncio.Queue()
+
+        async def worker() -> None:
+            while True:
+                msg = await queue.get()
+                try:
+                    await on_message(msg)
+                except Exception:  # never let one bad message kill the agent
+                    log.exception("handling message failed")
+
+        worker_task = asyncio.create_task(worker())
+        delay = 1
+        try:
+            while True:
+                try:
+                    stop = await self._session(queue, rooms or [])
+                    if stop:
+                        return
+                    delay = 1
+                except (OSError, websockets.ConnectionClosed, websockets.InvalidStatus) as e:
+                    log.warning("connection dropped (%s); reconnecting in %ss", e, delay)
+                self.connected.clear()
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30)
+        finally:
+            worker_task.cancel()
+
+    async def _session(self, queue: asyncio.Queue, rooms: list[str]) -> bool:
+        """One socket's life. Returns True when we must not reconnect."""
+        async with connect(self._ws_url(rooms), additional_headers=self.auth, ping_interval=None) as ws:
+            async for raw in ws:
+                frame = json.loads(raw)
+                kind = frame.get("event") or frame.get("type")
+                data = frame_data(frame)
+                log.debug("frame %s", frame)
+
+                if kind == "ping":  # answer first, before any work
+                    await ws.send(json.dumps({"type": "pong", "cursor": self.cursor or 0}))
+                    continue
+                if kind == "connection_state":
+                    self.generation = data.get("generation", self.generation)
+                    self.cursor = data.get("cursor", self.cursor)
+                    self.rooms = data.get("rooms", self.rooms)
+                    self.connected.set()
+                    log.info("connected: rooms=%s cursor=%s generation=%s", self.rooms, self.cursor, self.generation)
+                    continue
+                if kind == "gap":
+                    self.cursor = data.get("resumed_at", self.cursor)
+                    log.warning("gap in events (%s); resumed at %s", data.get("reason"), self.cursor)
+                    continue
+                if kind == "evicted":
+                    log.warning("evicted: %s %s", data.get("code"), data.get("reason"))
+                    return data.get("code") == "taken_over"
+                if kind == "refused":
+                    log.error("refused: %s %s", data.get("status"), data.get("detail"))
+                    continue
+                if kind == "subscription_changed":
+                    self.rooms = data.get("rooms", self.rooms)
+                    continue
+
+                seq = frame.get("id")
+                if isinstance(seq, int):
+                    self.cursor = max(self.cursor or 0, seq)
+                if kind == "message":
+                    queue.put_nowait(extract_message(frame))
+        return False
