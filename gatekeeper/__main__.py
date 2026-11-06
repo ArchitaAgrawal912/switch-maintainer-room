@@ -79,6 +79,26 @@ async def cmd_scan(cfg: config.Config) -> None:
     await gh.close()
 
 
+async def cmd_stale(cfg: config.Config) -> None:
+    """List assignments with no activity for 48 hours (from the ledger's assignment times)."""
+    from datetime import datetime, timezone
+
+    from .rules import Assignment, find_stale
+
+    state = State(cfg.state_file)
+    now = datetime.now(timezone.utc)
+    rows = []
+    for number, a in state.assignments.items():
+        at = datetime.strptime(a["at"], "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
+        rows.append(Assignment(int(number), a["login"], at, at))
+    stale = find_stale(rows, now)
+    if not stale:
+        print("No stale assignments.")
+    for s in stale:
+        hours = int((now - s.assigned_at).total_seconds() // 3600)
+        print(f"#{s.issue_number}  {s.login}  quiet for {hours}h")
+
+
 async def cmd_run(cfg: config.Config) -> None:
     _need(cfg.maintainers_room, "MAINTAINERS_ROOM_ID")
     sw = SwitchClient.from_file(cfg.switch_url, cfg.agent_file)
@@ -116,6 +136,7 @@ def main() -> None:
     sub.add_parser("rooms", help="list rooms and agents the Gatekeeper can see")
     sub.add_parser("setup", help="create the maintainers/reviews/contributors rooms and write their ids to .env")
     sub.add_parser("scan", help="dry run: poll GitHub once and print proposals")
+    sub.add_parser("stale", help="list assignments with no activity for 48 hours")
     sub.add_parser("run", help="connect to Switch and run")
     args = ap.parse_args()
 
@@ -126,7 +147,7 @@ def main() -> None:
         creds = register(cfg.switch_url, _need(cfg.registration_token, "SWITCH_REGISTRATION_TOKEN"), cfg.agent_name, cfg.agent_file, args.overwrite)
         print(f"Registered '{cfg.agent_name}' as {creds['agent_id']}. Key saved to {cfg.agent_file.name} (keep it secret).")
         return
-    asyncio.run({"ops": cmd_ops, "rooms": cmd_rooms, "setup": cmd_setup, "scan": cmd_scan, "run": cmd_run}[args.cmd](cfg))
+    asyncio.run({"ops": cmd_ops, "rooms": cmd_rooms, "setup": cmd_setup, "scan": cmd_scan, "stale": cmd_stale, "run": cmd_run}[args.cmd](cfg))
 
 
 if __name__ == "__main__":
