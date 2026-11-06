@@ -131,3 +131,52 @@ def first_requests(comments: list[Comment], ignore: set[str] = frozenset()) -> l
 def best_plan(comments: list[Comment], login: str) -> bool:
     """Did this person describe a plan in any of their comments?"""
     return any(has_plan(c.body) for c in comments if c.author.lower() == login.lower())
+
+
+# ------------------------------------------------------------------- rules
+
+
+def propose_assignment(
+    issue: Issue,
+    comments: list[Comment],
+    open_prs: dict[str, int],
+    *,
+    max_open_prs: int = 5,
+    ignore: set[str] = frozenset(),
+    already_assigned_to: str | None = None,
+) -> Proposal | None:
+    """Pick who should get this issue. None when nobody asked.
+
+    Rules: one person per issue, first to ask wins, fewer than
+    `max_open_prs` open pull requests, and they said how they'd do it.
+    """
+    holder = already_assigned_to or (issue.assignees[0] if issue.assignees else None)
+    if holder:
+        return None  # one person per issue: nothing to decide
+
+    requests = first_requests(comments, {i.lower() for i in ignore})
+    if not requests:
+        return None
+
+    candidates: list[Candidate] = []
+    for c in requests:
+        prs = open_prs.get(c.author, open_prs.get(c.author.lower(), 0))
+        plan = best_plan(comments, c.author)
+        if prs >= max_open_prs:
+            ok, why = False, f"already has {prs} open PRs (limit {max_open_prs})"
+        elif not plan:
+            ok, why = False, "did not say how they would solve it"
+        else:
+            ok, why = True, f"asked {c.created_at:%b %d %H:%M} UTC, {prs} open PRs, described a plan"
+        candidates.append(Candidate(c.author, c.created_at, prs, plan, ok, why))
+
+    winner = next((c for c in candidates if c.eligible), None)
+    if winner is None:
+        return Proposal(issue, None, "nobody who asked meets the rules yet", candidates)
+
+    for c in candidates:
+        if c.eligible and c is not winner:
+            c.reason = f"eligible, but asked after {winner.login}"
+    rank = candidates.index(winner)
+    lead = "first to ask" if rank == 0 else f"first eligible ({rank} earlier request{'s' if rank > 1 else ''} did not qualify)"
+    return Proposal(issue, winner.login, f"{lead}: {winner.reason}", candidates)
