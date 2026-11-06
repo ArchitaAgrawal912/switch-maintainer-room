@@ -1,8 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
 from gatekeeper.rules import (
+    Assignment,
     Comment,
     Issue,
+    PullRequest,
+    check_pr_eligible,
+    combine_verdicts,
+    find_stale,
     has_plan,
     is_assignment_request,
     propose_assignment,
@@ -73,3 +78,24 @@ def test_nobody_eligible_still_explains():
 def test_ignores_maintainers_bots_and_non_requests():
     comments = [c(1, "petr", PLAN), c(2, "dependabot[bot]", PLAN), c(3, "eve", "nice idea")]
     assert propose_assignment(ISSUE, comments, {}, ignore={"petr"}) is None
+
+
+def test_pr_eligibility():
+    held = {803: "kittu"}
+    ok = check_pr_eligible(PullRequest(912, "t", "kittu", "Adds redaction.\n\nCloses #803"), held)
+    assert ok.ok and ok.issue_number == 803
+    assert not check_pr_eligible(PullRequest(913, "t", "kittu", "no link"), held).ok
+    wrong = check_pr_eligible(PullRequest(914, "t", "mallory", "Fixes #803"), held)
+    assert not wrong.ok and "assigned to kittu" in wrong.reason
+    assert "not assigned" in check_pr_eligible(PullRequest(915, "t", "x", "resolves #1"), held).reason
+
+
+def test_find_stale():
+    fresh = Assignment(1, "a", T0, T0 + timedelta(hours=40))
+    stale = Assignment(2, "b", T0, T0)
+    assert find_stale([fresh, stale], T0 + timedelta(hours=49)) == [stale]
+
+
+def test_combine_verdicts():
+    assert combine_verdicts({"claude": "real", "codex": "real"}) == (True, "real")
+    assert combine_verdicts({"claude": "real", "codex": "broken"}) == (False, None)
