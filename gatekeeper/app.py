@@ -262,10 +262,12 @@ class Gatekeeper:
             else:
                 await self.say(msg.room_id, "Only maintainers can approve or reject proposals.")
             return
-        if not msg.addressed:
-            return
         text = M.strip_mentions(msg.body).lower()
-        if "free" in text or "available" in text:
+        asks_free = ("free" in text or "available" in text) and "issue" in text
+        in_desk = bool(self.cfg.contributors_room) and msg.room_id == self.cfg.contributors_room
+        if not (msg.addressed or (in_desk and asks_free)):
+            return
+        if asks_free or "free" in text:
             free = await self.free_issues()
             lines = [f"- #{i.number} {i.title} {i.url}" for i in free[:10]]
             await self.say(msg.room_id, f"{len(free)} issue(s) are free:\n" + "\n".join(lines) if free else "No free issues right now.")
