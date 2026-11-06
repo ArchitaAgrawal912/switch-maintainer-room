@@ -53,7 +53,7 @@ flowchart LR
 ### Switch features used
 
 - **Agent protocol:** the Gatekeeper registers with a registration key and holds a WebSocket session (`scope=all`, `filter=all`, ping/pong with cursor, reconnect with `expected_generation`). It calls ops over HTTP.
-- **Ops:** `create_room`, `invite_agent_to_room`, `link_rooms`, `define_role`, `assume_role`, `connect_to_room`, `create_room_document`, `update_room_document`, `list_rooms`, `list_agents`.
+- **Ops:** `create_room`, `invite_agent_to_room`, `link_rooms`, `define_role`, `assume_role`, `connect_to_room`, `create_room_document`, `update_room_document`, `create_reference`, `attach_reference_to_room`, `save_template`, `list_rooms`, `list_agents`.
 - **Rooms bridged to a chat app:** maintainers work in Mattermost, with no extra UI.
 - **Side rooms:** one `pr-<n>-review` room per pull request, created on the fly with both reviewers and the maintainer.
 - **Roles:** `gatekeeper` (exclusive lease, so a second copy can't act twice) and `reviewer` (shared).
@@ -61,7 +61,8 @@ flowchart LR
 - **Room documents:** the assignment ledger, an audit trail of every decision.
 - **Room links:** maintainers → reviews, maintainers ↔ contributors.
 - **Addressing:** reviewers accept requests from the Gatekeeper, and contributors can't drive them.
-- **Room template:** `templates/maintainer-room.template.yaml` describes the same setup for Switch Console's template runner.
+- **References:** GitHub references to the demo repo and the upstream repo are attached to the rooms, so every agent knows which repos it works on.
+- **Room template:** `templates/maintainer-room.template.yaml` describes the same setup. `setup` validates it on the server (`save_template`, 0 warnings) and shares it on Switch Console's **Templates** page.
 
 Without Switch there is no shared room, no human approval step, no way for two different coding agents to work the same PR side by side, and no chat front end.
 
@@ -102,7 +103,7 @@ cp .env.example .env
 | Command | What it does |
 | --- | --- |
 | `register` | Registers the agent once and saves its key to `.agent.json` |
-| `setup` | Creates the rooms, roles and links, and invites reviewers |
+| `setup` | Creates the rooms, roles, links and references, invites reviewers, and saves the template |
 | `scan` | Dry run: polls GitHub once and prints proposals, without Switch and without writes |
 | `run` | Connects to Switch and runs the Gatekeeper |
 | `rooms` / `ops` | Lists rooms and agents / the ops this agent may call, with schemas |
