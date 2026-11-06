@@ -1,4 +1,10 @@
 .env
+.agent.json
+state.json
+scan-state.json
+ledger.md
+gatekeeper.log
 .venv/
 __pycache__/
 .pytest_cache/
+*.tmp
