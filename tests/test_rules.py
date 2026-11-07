@@ -10,6 +10,7 @@ from gatekeeper.rules import (
     find_stale,
     has_plan,
     is_assignment_request,
+    plan_score,
     propose_assignment,
 )
 
@@ -37,13 +38,32 @@ def test_plan_needs_length_and_a_how():
     assert not has_plan("assign me " * 3)
 
 
-def test_first_eligible_asker_wins():
+def test_equal_plans_tie_break_on_who_asked_first():
     comments = [c(1, "alice", PLAN, 0), c(2, "bob", PLAN, 5)]
     p = propose_assignment(ISSUE, comments, {"alice": 1, "bob": 0})
     assert p.winner == "alice"
-    assert p.reason.startswith("first to ask")
+    assert p.reason.startswith("most concrete plan of 2")
     assert [o.login for o in p.others] == ["bob"]
-    assert p.others[0].reason == "eligible, but asked after alice"
+    assert p.others[0].reason == "eligible, same plan score but asked after alice"
+
+
+DETAILED = (
+    "Can I take this? Plan:\n1. Add `connectors/grafana.py` with the auth flow\n"
+    "2. Register it in `registry.py`\n3. Write pytest tests for token refresh and error handling\n"
+    "4. Update the docs page"
+)
+
+
+def test_a_more_concrete_plan_beats_asking_first():
+    comments = [c(1, "racer", PLAN, 0), c(2, "careful", DETAILED, 30)]
+    p = propose_assignment(ISSUE, comments, {})
+    assert p.winner == "careful"
+    assert "more concrete" in p.others[0].reason
+
+
+def test_plan_score_rewards_specifics_not_padding():
+    assert plan_score(DETAILED) > plan_score(PLAN)
+    assert plan_score("I will do it " * 200) <= 4 + 0  # padding is capped
 
 
 def test_skips_people_at_pr_limit_and_without_plan():

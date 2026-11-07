@@ -46,6 +46,8 @@ class Candidate:
     has_plan: bool
     eligible: bool
     reason: str
+    score: int = 0
+    plan: str = ""
 
 
 @dataclass
@@ -133,6 +135,27 @@ def best_plan(comments: list[Comment], login: str) -> bool:
     return any(has_plan(c.body) for c in comments if c.author.lower() == login.lower())
 
 
+_PLAN_SIGNALS = (
+    (re.compile(r"`[^`\n]+`|\b[\w./-]+\.(?:py|ts|tsx|js|go|rs|md|ya?ml|json|toml)\b"), 2),  # names files or code
+    (re.compile(r"\b(?:tests?|pytest|unit|integration)\b", re.IGNORECASE), 2),             # plans to test it
+    (re.compile(r"^\s*(?:\d+[.)]|[-*])\s+\w", re.MULTILINE), 2),                          # lists steps
+    (re.compile(r"\b(?:edge cases?|errors?|fallback|backwards?|docs?|documentation|readme)\b", re.IGNORECASE), 1),
+)
+
+
+def plan_score(text: str) -> int:
+    """How concrete a plan is. Length counts a little and is capped, so padding can't win."""
+    text = text or ""
+    score = min(len(re.findall(r"\w+", text)) // 25, 4)
+    return score + sum(points for rx, points in _PLAN_SIGNALS if rx.search(text))
+
+
+def plan_text(comments: list[Comment], login: str) -> str:
+    """This person's most concrete comment."""
+    mine = [c.body for c in comments if c.author.lower() == login.lower()]
+    return max(mine, key=plan_score, default="")
+
+
 # ------------------------------------------------------------------- rules
 
 
@@ -147,8 +170,10 @@ def propose_assignment(
 ) -> Proposal | None:
     """Pick who should get this issue. None when nobody asked.
 
-    Rules: one person per issue, first to ask wins, fewer than
-    `max_open_prs` open pull requests, and they said how they'd do it.
+    Eligible: fewer than `max_open_prs` open pull requests, and they said how
+    they'd do it. One person per issue. Among the eligible, the most concrete
+    plan wins (see plan_score); asking first only breaks ties, so racing to
+    comment "assign me" earns nothing.
     """
     holder = already_assigned_to or (issue.assignees[0] if issue.assignees else None)
     if holder:
@@ -162,23 +187,28 @@ def propose_assignment(
     for c in requests:
         prs = open_prs.get(c.author, open_prs.get(c.author.lower(), 0))
         plan = best_plan(comments, c.author)
+        text = plan_text(comments, c.author)
+        score = plan_score(text)
         if prs >= max_open_prs:
             ok, why = False, f"already has {prs} open PRs (limit {max_open_prs})"
         elif not plan:
             ok, why = False, "did not say how they would solve it"
         else:
-            ok, why = True, f"asked {c.created_at:%b %d %H:%M} UTC, {prs} open PRs, described a plan"
-        candidates.append(Candidate(c.author, c.created_at, prs, plan, ok, why))
+            ok, why = True, f"plan score {score}, {prs} open PRs, asked {c.created_at:%b %d %H:%M} UTC"
+        candidates.append(Candidate(c.author, c.created_at, prs, plan, ok, why, score, text))
 
-    winner = next((c for c in candidates if c.eligible), None)
-    if winner is None:
+    eligible = sorted((c for c in candidates if c.eligible), key=lambda c: (-c.score, c.asked_at))
+    if not eligible:
         return Proposal(issue, None, "nobody who asked meets the rules yet", candidates)
 
-    for c in candidates:
-        if c.eligible and c is not winner:
-            c.reason = f"eligible, but asked after {winner.login}"
-    rank = candidates.index(winner)
-    lead = "first to ask" if rank == 0 else f"first eligible ({rank} earlier request{'s' if rank > 1 else ''} did not qualify)"
+    winner = eligible[0]
+    for c in eligible[1:]:
+        c.reason = (
+            f"eligible, but {winner.login}'s plan is more concrete (score {c.score} vs {winner.score})"
+            if c.score < winner.score
+            else f"eligible, same plan score but asked after {winner.login}"
+        )
+    lead = "only eligible request" if len(eligible) == 1 else f"most concrete plan of {len(eligible)} eligible requests"
     return Proposal(issue, winner.login, f"{lead}: {winner.reason}", candidates)
 
 
