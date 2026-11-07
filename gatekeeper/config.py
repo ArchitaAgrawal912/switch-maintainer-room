@@ -43,6 +43,9 @@ class Config:
     poll_seconds: int
     replay_mode: bool
     dry_run: bool
+    auto_mode: bool
+    plan_judge: str
+    judge_timeout: int
     state_file: Path
     agent_file: Path
 
@@ -72,6 +75,9 @@ def load() -> Config:
         poll_seconds=int(os.getenv("POLL_SECONDS", "60")),
         replay_mode=_bool("REPLAY_MODE", "true"),
         dry_run=_bool("DRY_RUN"),
+        auto_mode=_bool("AUTO_MODE"),
+        plan_judge=os.getenv("PLAN_JUDGE", (_list("REVIEWERS") or [""])[0]),
+        judge_timeout=int(os.getenv("JUDGE_TIMEOUT", "180")),
         state_file=ROOT / os.getenv("STATE_FILE", "state.json"),
         agent_file=ROOT / ".agent.json",
     )

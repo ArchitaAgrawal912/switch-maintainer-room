@@ -24,6 +24,7 @@ class State:
         self.verdicts: dict[str, dict[str, str]] = data.get("verdicts", {})
         self.ledger: list[dict] = data.get("ledger", [])
         self.ledger_doc_id: str | None = data.get("ledger_doc_id")
+        self.judging: dict[str, dict] = data.get("judging", {})
 
     def save(self) -> None:
         data = {
@@ -35,6 +36,7 @@ class State:
             "verdicts": self.verdicts,
             "ledger": self.ledger,
             "ledger_doc_id": self.ledger_doc_id,
+            "judging": self.judging,
         }
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, default=str), "utf-8")
@@ -63,6 +65,9 @@ class State:
 
     def assign(self, number: int, login: str) -> None:
         self.assignments[str(number)] = {"login": login, "at": now_iso()}
+
+    def unassign(self, number: int) -> None:
+        self.assignments.pop(str(number), None)
 
     # ---- ledger
     def log(self, action: str, subject: str, who: str, reason: str, by: str) -> None:

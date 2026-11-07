@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 
@@ -109,3 +110,14 @@ class GitHub:
 
     async def add_label(self, number: int, label: str) -> None:
         await self._write("POST", f"/repos/{self.repo}/issues/{number}/labels", {"labels": [label]})
+
+    async def remove_label(self, number: int, label: str) -> None:
+        if self.dry_run:
+            log.info("[dry-run] remove label %s from #%s", label, number)
+            return
+        r = await self.http.delete(f"/repos/{self.repo}/issues/{number}/labels/{quote(label, safe='')}")
+        if r.status_code not in (200, 404):
+            r.raise_for_status()
+
+    async def unassign(self, number: int, login: str) -> None:
+        await self._write("DELETE", f"/repos/{self.repo}/issues/{number}/assignees", {"assignees": [login]})

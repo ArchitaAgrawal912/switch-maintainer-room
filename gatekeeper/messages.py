@@ -6,7 +6,7 @@ import re
 from .rules import Proposal, PullRequest, normalize_verdict
 
 _MENTION = re.compile(r"@[\w.\-]+")
-_COMMAND = re.compile(r"^\s*(approve|reject)\b(?:\s+#?(\d+))?(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+_COMMAND = re.compile(r"^\s*(approve|reject|undo)\b(?:\s+#?(\d+))?(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 _VERDICT = re.compile(r"VERDICT\s*:\s*(real|low[- _]?effort|broken)", re.IGNORECASE)
 _PR_REF = re.compile(r"\bPR\s*#?(\d+)\b", re.IGNORECASE)
 
@@ -79,7 +79,41 @@ def review_request(pr: PullRequest, reviewers: list[str], repo: str) -> str:
     )
 
 
+_PICK = re.compile(r"PICK\s*:\s*#?(\d+)\s+@?`?([\w.\-]+)`?\s*[-–—:,]?\s*(.*)", re.IGNORECASE)
+
+
+def parse_pick(body: str) -> tuple[int, str, str] | None:
+    """'PICK: #11 alice - names the files and adds tests' -> (11, 'alice', 'names the files...')."""
+    m = _PICK.search(body or "")
+    if not m:
+        return None
+    return int(m.group(1)), m.group(2), m.group(3).strip().rstrip("`").strip() or "best plan"
+
+
+def judge_request(judge: str, number: int, title: str, candidates: list[dict]) -> str:
+    rows = []
+    for i, c in enumerate(candidates, 1):
+        plan = " ".join(strip_mentions(c["plan"]).split())[:600]
+        rows.append(f"{i}. `{c['login']}` (asked {c['asked_at'][:16].replace('T', ' ')}): {plan}")
+    return (
+        f"@{judge} issue #{number} *{title}* has {len(candidates)} eligible requests. "
+        "Pick the plan most likely to become a good pull request: specific, correct, and tested. "
+        "Ignore who asked first.\n" + "\n".join(rows) +
+        f"\nReply with exactly one line: `PICK: #{number} <login> - <one-line reason>`"
+    )
+
+
+def is_clear_cut(p: Proposal) -> bool:
+    """Exactly one eligible person asked: no judgement call for a human to make."""
+    return bool(p.winner) and not any(c.eligible for c in p.others)
+
+
+def auto_text(pid: int, what: str, why: str, undoable: bool = True) -> str:
+    tail = f" Reply `undo {pid}` to revert." if undoable else ""
+    return f"🤖 **Auto {pid}** · {what}. Why: {why}.{tail}"
+
+
 HELP = (
-    "I'm the Gatekeeper. Maintainers: reply `approve <id>` or `reject <id> [reason]` to a proposal. "
+    "I'm the Gatekeeper. Maintainers: reply `approve <id>`, `reject <id> [reason]` or `undo <id>`. "
     "Anyone: ask me `free issues` to see what is unassigned."
 )

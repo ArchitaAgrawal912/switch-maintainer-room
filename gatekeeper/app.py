@@ -54,12 +54,13 @@ class Gatekeeper:
             await asyncio.sleep(self.cfg.poll_seconds)
 
     async def poll_once(self) -> None:
+        await self._expire_judging()
         counts: dict[str, int] = {}
         for issue in await self.gh.list_issues(self.cfg.issue_label):
             comments = await self.gh.list_comments(issue.number)
             new = [c for c in comments if c.id not in self.state.seen_comments]
             self.state.seen_comments.update(c.id for c in new)
-            if not new or self.state.pending_for_issue(issue.number):
+            if not new or self.state.pending_for_issue(issue.number) or str(issue.number) in self.state.judging:
                 continue
             for login in {c.author for c in comments}:
                 if login not in counts:
@@ -87,6 +88,69 @@ class Gatekeeper:
         if not p.winner:
             await self.say(self.cfg.maintainers_room, M.proposal_text(0, p).replace("**Proposal 0** · ", "FYI · "))
             return
+        eligible = [c for c in p.candidates if c.eligible]
+        if len(eligible) > 1 and self.cfg.plan_judge and self.switch:
+            await self._ask_judge(p, eligible)
+            return
+        await self._record_assignment(p)
+
+    # ---- plan judge: an AI reviewer picks the best of several eligible plans
+    async def _ask_judge(self, p: Proposal, eligible: list[Candidate]) -> None:
+        import time
+
+        n = p.issue.number
+        cands = [
+            {"login": c.login, "reason": c.reason, "eligible": c.eligible, "score": c.score, "plan": c.plan,
+             "asked_at": c.asked_at.isoformat(), "open_prs": c.open_prs}
+            for c in p.candidates
+        ]
+        self.state.judging[str(n)] = {
+            "issue": n, "title": p.issue.title, "candidates": cands,
+            "fallback_winner": p.winner, "fallback_reason": p.reason, "since": time.time(),
+        }
+        self.state.save()
+        room = self.cfg.reviews_room or self.cfg.maintainers_room
+        await self.say(room, M.judge_request(self.cfg.plan_judge, n, p.issue.title, [c for c in cands if c["eligible"]]))
+        await self.say(
+            self.cfg.maintainers_room,
+            f"Issue #{n}: {len(eligible)} eligible requests. Asked {self.cfg.plan_judge} to pick the strongest plan.",
+        )
+
+    async def _expire_judging(self) -> None:
+        import time
+
+        for key, data in list(self.state.judging.items()):
+            if time.time() - data["since"] >= self.cfg.judge_timeout:
+                await self._finish_judging(int(key), data["fallback_winner"],
+                                           f"{data['fallback_reason']} (judge didn't answer; ranked by plan score)", judged=False)
+
+    async def _finish_judging(self, n: int, winner: str, reason: str, judged: bool = True) -> None:
+        from datetime import datetime
+
+        data = self.state.judging.pop(str(n), None)
+        if not data:
+            return
+        cands = []
+        for c in data["candidates"]:
+            why = c["reason"]
+            if judged and c["eligible"] and c["login"].lower() != winner.lower():
+                why = f"eligible, but the judge preferred {winner}'s plan"
+            cands.append(Candidate(c["login"], datetime.fromisoformat(c["asked_at"]), c["open_prs"], True,
+                                   c["eligible"], why, c["score"], c["plan"]))
+        winner = next((c.login for c in cands if c.login.lower() == winner.lower()), winner)
+        await self._record_assignment(Proposal(Issue(n, data["title"]), winner, reason, cands))
+
+    async def _on_pick(self, msg: Message, n: int, login: str, why: str) -> None:
+        data = self.state.judging.get(str(n))
+        if not data:
+            return
+        eligible = {c["login"].lower() for c in data["candidates"] if c["eligible"]}
+        if login.lower() not in eligible:
+            log.warning("judge picked %s for #%s, who isn't eligible; ignoring", login, n)
+            return
+        await self._finish_judging(n, login, f"{msg.sender_name or 'the judge'} picked the strongest plan: {why}")
+
+    async def _record_assignment(self, p: Proposal) -> None:
         pid = self.state.add_proposal(
             "assign",
             {
@@ -97,6 +161,15 @@ class Gatekeeper:
                 "candidates": [{"login": c.login, "reason": c.reason, "eligible": c.eligible} for c in p.candidates],
             },
         )
+        if self.cfg.auto_mode and M.is_clear_cut(p):
+            prop = self.state.proposals[str(pid)]
+            await self._do_assign(prop, "auto")
+            prop["status"] = "auto"
+            self.state.save()
+            why = "the only eligible request" + (f" ({len(p.others)} other(s) broke the rules)" if p.others else "")
+            await self.say(self.cfg.maintainers_room, M.auto_text(pid, f"assigned #{p.issue.number} to {p.winner}", why))
+            await self.sync_ledger()
+            return
         self.state.save()
         await self.say(self.cfg.maintainers_room, M.proposal_text(pid, p))
 
@@ -132,6 +205,9 @@ class Gatekeeper:
                 "Ask for the issue first, and add `Closes #<issue>` to the description once it is assigned to you."
             )
             pid = self.state.add_proposal("pr_comment", {"pr": pr.number, "body": body, "reason": check.reason})
+            if self.cfg.auto_mode:  # a rule break needs no judgement: reply and move on
+                await self._auto_comment(pid, f"told the author of PR #{pr.number} it can't be reviewed yet", check.reason)
+                return
             await self.say(
                 self.cfg.maintainers_room,
                 f"**Proposal {pid}** · PR #{pr.number} by {pr.author} is not eligible: {check.reason}. "
@@ -172,7 +248,14 @@ class Gatekeeper:
             return
         agree, final = combine_verdicts(votes)
         summary = ", ".join(f"{k}: {v}" for k, v in votes.items())
-        if agree:
+        if agree and self.cfg.auto_mode and final in ("low-effort", "broken"):
+            body = (
+                f"Thanks for the pull request. {expected} independent reviewers found it **{final}**, "
+                "so it won't be reviewed by a maintainer as it stands. See the hackathon rules on low-effort PRs."
+            )
+            pid = self.state.add_proposal("pr_comment", {"pr": pr_number, "body": body, "reason": f"reviewers agree: {final}"})
+            await self._auto_comment(pid, f"replied on PR #{pr_number}: {final}", f"both reviewers agree ({summary})")
+        elif agree:
             body = f"Automated review by {expected} agent(s): **{final}**. A maintainer will take it from here."
             pid = self.state.add_proposal("pr_comment", {"pr": pr_number, "body": body, "reason": f"reviewers agree: {final}"})
             await self.say(
@@ -189,8 +272,39 @@ class Gatekeeper:
             )
         self.state.save()
 
+    async def _auto_comment(self, pid: int, what: str, why: str) -> None:
+        prop = self.state.proposals[str(pid)]
+        await self.gh.comment(prop["pr"], prop["body"])
+        prop["status"] = "auto"
+        self.state.log("commented (auto)", f"PR #{prop['pr']}", "", prop["reason"], "auto")
+        self.state.save()
+        await self.say(self.cfg.maintainers_room, M.auto_text(pid, what, why, undoable=False))
+        await self.sync_ledger()
+
+    async def _undo(self, msg: Message, pid: int | None) -> None:
+        prop = self.state.proposals.get(str(pid)) if pid else None
+        if not prop or prop["kind"] != "assign" or prop["status"] not in ("auto", "approved"):
+            await self.say(msg.room_id, "I can undo an assignment I carried out: `undo <id>`.")
+            return
+        n, winner = prop["issue"], prop["winner"]
+        if self.cfg.replay_mode:
+            await self.gh.remove_label(n, f"assigned: {winner}")
+        else:
+            await self.gh.unassign(n, winner)
+        await self.gh.comment(n, f"A maintainer reverted this assignment ({M.who(winner, self.cfg.replay_mode)}). The issue is open again.")
+        self.state.unassign(n)
+        prop["status"] = "reverted"
+        by = msg.sender_name or msg.sender
+        self.state.log("reverted", f"#{n}", winner, "maintainer undo", by)
+        self.state.save()
+        await self.say(msg.room_id, f"Reverted {pid}: #{n} is unassigned again and logged in the ledger.")
+        await self.sync_ledger()
+
     # ---------------------------------------------------------- approvals
     async def _on_command(self, msg: Message, action: str, pid: int | None, note: str) -> None:
+        if action == "undo":
+            await self._undo(msg, pid)
+            return
         pending = self.state.pending()
         if pid is None:
             if len(pending) != 1:
@@ -254,6 +368,10 @@ class Gatekeeper:
         verdict = M.parse_verdict(msg.body)
         if verdict and self._is_reviewer(msg):
             await self._on_verdict(msg, *verdict)
+            return
+        pick = M.parse_pick(msg.body)
+        if pick and self._is_reviewer(msg):
+            await self._on_pick(msg, *pick)
             return
         cmd = M.parse_command(msg.body)
         if cmd and (msg.addressed or msg.room_id == self.cfg.maintainers_room):
