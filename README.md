@@ -4,6 +4,8 @@
 
 Built for the [Flip the Switch hackathon](https://www.wemakedevs.org/hackathons/switch) (Track 1: Best Business Workflow).
 
+**▶ Demo video (under 3 min): https://youtu.be/Av67UUs4z5A**
+
 ## The problem
 
 During hackathons, Hacktoberfest and GSoC, popular repos get flooded with "can I work on this?" comments. Maintainers check by hand who asked first, how many PRs each person already has open, who went quiet, and which PRs are low-effort.
