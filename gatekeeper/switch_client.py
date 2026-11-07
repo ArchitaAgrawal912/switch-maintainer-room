@@ -232,7 +232,8 @@ class SwitchClient:
                     log.warning("evicted: %s %s", data.get("code"), data.get("reason"))
                     return data.get("code") == "taken_over"
                 if kind == "refused":
-                    log.error("refused: %s %s", data.get("status"), data.get("detail"))
+                    log.warning("refused: %s %s", data.get("status"), str(data.get("detail"))[:120])
+                    self.generation = None  # a stale generation is the usual cause; retry without it
                     continue
                 if kind == "subscription_changed":
                     self.rooms = data.get("rooms", self.rooms)
