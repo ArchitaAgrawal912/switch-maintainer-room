@@ -24,7 +24,7 @@ Replaying five of those issues through Maintainer Room, the Gatekeeper skipped a
 | **Reviewer A** | Claude Code agent, run by Switch Console | Checks out each eligible PR, runs the tests, and gives a verdict: `real`, `low-effort` or `broken` |
 | **Reviewer B** | A second Claude Code agent with its own working directory and session (set it to a different model, or swap in Codex/OpenCode) | Reviews the same PR independently. If A and B disagree, a person decides |
 | **Maintainer** | A person in Mattermost (or Slack, Discord, Teams, Telegram) | Replies `approve 3` or `reject 3 <reason>` |
-| **Contributors** | People in `#mroom-contributors` | Ask `@gatekeeper free issues` instead of pinging maintainers |
+| **Contributors** | People on **Discord** in `#mroom-contributor-desk` (and in Mattermost `#mroom-contributors`) | Ask `free issues` instead of pinging maintainers |
 
 ```mermaid
 flowchart LR
@@ -38,8 +38,9 @@ flowchart LR
   A -- VERDICT --> GK
   B -- VERDICT --> GK
   GK -- writes --> LD[(assignment-ledger<br/>room document)]
-  CR["#mroom-contributors"] -- "free issues?" --> GK
-  MR <--> MM[Mattermost]
+  CR["#mroom-contributor-desk"] -- "free issues?" --> GK
+  MR <--> MM[Mattermost<br/>maintainers]
+  CR <--> DC[Discord<br/>contributors]
 ```
 
 ### The rules (`gatekeeper/rules.py`, pure functions, unit-tested)
@@ -54,7 +55,7 @@ flowchart LR
 
 - **Agent protocol:** the Gatekeeper registers with a registration key and holds a WebSocket session (`scope=all`, `filter=all`, ping/pong with cursor, reconnect with `expected_generation`). It calls ops over HTTP.
 - **Ops:** `create_room`, `invite_agent_to_room`, `link_rooms`, `define_role`, `assume_role`, `connect_to_room`, `create_room_document`, `update_room_document`, `create_reference`, `attach_reference_to_room`, `save_template`, `list_rooms`, `list_agents`.
-- **Rooms bridged to a chat app:** maintainers work in Mattermost, with no extra UI.
+- **Rooms bridged to two chat apps:** maintainers work in Mattermost and contributors in Discord. One Gatekeeper serves both, and the rooms are linked across apps.
 - **Side rooms:** one `pr-<n>-review` room per pull request, created on the fly with both reviewers and the maintainer.
 - **Roles:** `gatekeeper` (exclusive lease, so a second copy can't act twice) and `reviewer` (shared).
 - **Room instructions:** the contribution rules are written once and every agent in the room reads them.
@@ -97,6 +98,8 @@ cp .env.example .env
 7. In Mattermost `#mroom-maintainers`, reply `approve <id>` to a proposal and watch the issue on GitHub.
 
 `setup` is safe to re-run: it reuses existing rooms and invites any reviewer created since.
+
+**Contributor desk on Discord (optional).** Connect Discord in Switch Console (**Home → Messaging apps → Connect → Discord**, following [Switch's Discord guide](https://docs.switchagents.ai/switch-rooms/deploy/messaging-apps/discord)). Then set `DESK_BRIDGE=discord` and `DESK_USERNAMES=<your Discord username>`, and run `setup` again. It creates `#mroom-contributor-desk` on Discord, links it to the maintainers room, and the Gatekeeper answers there. Slack, Teams and Telegram work the same way.
 
 ### Commands
 
@@ -153,5 +156,5 @@ tests/
 ## Next
 
 - **Stale sweep:** `find_stale()` is written and tested. It needs a daily job that proposes reassignment after 48 hours without activity.
-- **Contributor desk in Discord:** bridge `#mroom-contributors` to Discord and answer "why was I unassigned?" from the ledger.
+- **"Why was I unassigned?"** on the Discord desk, answered from the ledger.
 - **A second reviewer on Codex:** swap `mroom-reviewer-b` for a Codex agent for true cross-vendor review.
