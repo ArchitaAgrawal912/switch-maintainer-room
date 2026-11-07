@@ -46,10 +46,25 @@ flowchart LR
 ### The rules (`gatekeeper/rules.py`, pure functions, unit-tested)
 
 1. **One person per issue.** An issue that is already assigned gets no proposal.
-2. **First to ask wins**, if eligible. Eligible means fewer than 5 open PRs (counted live on the real repo) and a stated plan for the fix.
+2. **The best plan wins, not the fastest comment.** Eligible means fewer than 5 open PRs (counted live on the real repo) and a stated plan for the fix. When several people are eligible, the Gatekeeper asks a reviewer agent to **judge the plans** (`PICK: #n <login> - reason`). If the judge doesn't answer in time, a plan score decides: files named, tests planned, steps listed, with length capped so padding can't win. Asking first only breaks ties, so racing to comment "assign me" earns nothing.
 3. **A PR is reviewed only if** it says `Closes #n` and its author holds issue #n. Otherwise the maintainer gets a note to post on the PR.
 4. **Two independent reviewers.** If they agree, the result goes to the maintainer. If they disagree, the maintainer gets both arguments, and nothing is posted on GitHub until they decide.
 5. **Every approved action** is written to the `assignment-ledger` room document and a local `ledger.md`.
+
+### Auto mode: people only see what needs a person
+
+With `AUTO_MODE=true`, the Gatekeeper handles clear-cut cases itself and posts one line with `undo <id>`:
+
+| Case | Who decides |
+| --- | --- |
+| Only one eligible request | 🤖 assigned automatically (`undo` to revert) |
+| PR breaks the rules (no `Closes #n`, author doesn't hold the issue) | 🤖 polite reply on the PR |
+| Both reviewers call a PR low-effort or broken | 🤖 polite reply on the PR |
+| Several eligible people want one issue | 🤖 judge picks the plan, 👩 maintainer approves |
+| Both reviewers call a PR real | 👩 maintainer |
+| Reviewers disagree | 👩 maintainer, with both arguments |
+
+With `AUTO_MODE=false` (the default), every GitHub write waits for `approve`.
 
 ### Switch features used
 
