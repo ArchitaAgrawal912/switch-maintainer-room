@@ -92,7 +92,7 @@ async def cmd_run(cfg: config.Config) -> None:
     sw = SwitchClient.from_file(cfg.switch_url, cfg.agent_file)
     gh = GitHub(cfg.github_token, _need(cfg.repo, "GITHUB_REPO"), dry_run=cfg.dry_run)
     gk = Gatekeeper(cfg, sw, gh, State(cfg.state_file))
-    rooms = [r for r in (cfg.maintainers_room, cfg.reviews_room, cfg.contributors_room) if r]
+    rooms = [r for r in (cfg.maintainers_room, cfg.reviews_room, cfg.contributors_room, cfg.desk_room) if r]
 
     async def take_role() -> None:
         """The exclusive role is a lease: a dropped socket releases it, so take it on every connect."""

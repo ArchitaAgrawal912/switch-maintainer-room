@@ -27,6 +27,9 @@ class Config:
     maintainers_room: str
     reviews_room: str
     contributors_room: str
+    desk_room: str
+    desk_bridge: str
+    desk_usernames: list[str]
     reviewers: list[str]
     maintainers: list[str]
     maintainer_usernames: list[str]
@@ -53,6 +56,9 @@ def load() -> Config:
         maintainers_room=os.getenv("MAINTAINERS_ROOM_ID", ""),
         reviews_room=os.getenv("REVIEWS_ROOM_ID", ""),
         contributors_room=os.getenv("CONTRIBUTORS_ROOM_ID", ""),
+        desk_room=os.getenv("DESK_ROOM_ID", ""),
+        desk_bridge=os.getenv("DESK_BRIDGE", "").lower(),
+        desk_usernames=_list("DESK_USERNAMES"),
         reviewers=_list("REVIEWERS"),
         maintainers=[m.lower() for m in _list("MAINTAINERS")],
         maintainer_usernames=_list("MAINTAINER_USERNAMES"),

@@ -39,7 +39,7 @@ class FakeSwitch:
 def cfg(tmp: Path) -> Config:
     return Config(
         switch_url="http://x", registration_token="", agent_name="gatekeeper",
-        maintainers_room="maint", reviews_room="rev", contributors_room="", reviewers=["claude", "codex"],
+        maintainers_room="maint", reviews_room="rev", contributors_room="", desk_room="", desk_bridge="", desk_usernames=[], reviewers=["claude", "codex"],
         maintainers=[], maintainer_usernames=[], side_rooms=False, github_token="", repo="me/demo", issue_label="hackathon",
         count_prs_repo="me/demo", ignore_logins=[], max_open_prs=5, poll_seconds=60, replay_mode=True,
         dry_run=False, state_file=tmp / "state.json", agent_file=tmp / ".agent.json",

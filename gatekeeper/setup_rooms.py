@@ -96,10 +96,39 @@ async def setup(cfg: Config, sw: SwitchClient, prefix: str = "mroom") -> dict[st
         except RuntimeError as e:
             log.info("link %s -> %s: %s", src, dst, str(e)[:160])
 
+    if cfg.desk_bridge:
+        desk = await desk_room(cfg, sw, existing, rules, ids["MAINTAINERS_ROOM_ID"])
+        if desk:
+            ids["DESK_ROOM_ID"] = desk
     await attach_references(cfg, sw, ids)
     await save_template(sw)
     _set_env(ids)
     return ids
+
+
+async def desk_room(cfg: Config, sw: SwitchClient, existing: dict[str, str], rules: str, maintainers: str) -> str | None:
+    """A contributor help desk on a second chat app (e.g. Discord), linked to the maintainers room."""
+    name = "mroom-contributor-desk"
+    if name in existing:
+        log.info("room %s exists (%s)", name, existing[name])
+        return existing[name]
+    bridges = await sw.op("list_bridges")
+    bridge = next((b for b in bridges if b["type"].lower() == cfg.desk_bridge or b["display_name"].lower() == cfg.desk_bridge), None)
+    if not bridge:
+        log.warning("no %s bridge on this server; connect it in Switch Console first", cfg.desk_bridge)
+        return None
+    res = await sw.op(
+        "create_room", name=name, description="Ask the Gatekeeper which issues are free. Maintainers work in another app.",
+        agent_names=[cfg.agent_name], user_names=cfg.desk_usernames or None, instructions=rules,
+        bridge_id=bridge["id"], channel_type="channel_public",
+    )
+    log.info("created %s on %s (%s)", name, bridge["display_name"], res["id"])
+    for src, dst, label in ((res["id"], maintainers, "escalate to maintainers"), (maintainers, res["id"], f"contributor desk on {bridge['type']}")):
+        try:
+            await sw.op("link_rooms", source_room_id=src, target_room_id=dst, label=label)
+        except RuntimeError as e:
+            log.info("link: %s", str(e)[:160])
+    return res["id"]
 
 
 async def attach_references(cfg: Config, sw: SwitchClient, ids: dict[str, str]) -> None:
@@ -108,7 +137,7 @@ async def attach_references(cfg: Config, sw: SwitchClient, ids: dict[str, str]) 
         (f"{cfg.repo}", f"https://github.com/{cfg.repo}",
          "The repo this room looks after: its issues, pull requests and the Gatekeeper's replies.",
          "Issues labelled for contributors live here. Check out pull requests from here to review them.",
-         ["MAINTAINERS_ROOM_ID", "REVIEWS_ROOM_ID", "CONTRIBUTORS_ROOM_ID"]),
+         ["MAINTAINERS_ROOM_ID", "REVIEWS_ROOM_ID", "CONTRIBUTORS_ROOM_ID", "DESK_ROOM_ID"]),
         (f"{cfg.count_prs_repo} (upstream)", f"https://github.com/{cfg.count_prs_repo}",
          "The upstream project whose contribution rules this room enforces.",
          "Open pull requests per contributor are counted here. Read CONTRIBUTING.md for the rules behind each decision.",
@@ -117,7 +146,7 @@ async def attach_references(cfg: Config, sw: SwitchClient, ids: dict[str, str]) 
     for name, url, desc, how, rooms in refs:
         attached_somewhere = False
         targets = []
-        for key in rooms:
+        for key in [k for k in rooms if k in ids]:
             info = await sw.op("connect_to_room", room_id=ids[key], include_general_instructions=False)
             sw._active_room = ids[key]
             names = {r.get("name") for r in (info or {}).get("references") or []}

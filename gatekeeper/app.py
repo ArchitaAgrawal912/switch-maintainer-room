@@ -264,7 +264,7 @@ class Gatekeeper:
             return
         text = M.strip_mentions(msg.body).lower()
         asks_free = ("free" in text or "available" in text) and "issue" in text
-        in_desk = bool(self.cfg.contributors_room) and msg.room_id == self.cfg.contributors_room
+        in_desk = msg.room_id in {r for r in (self.cfg.contributors_room, self.cfg.desk_room) if r}
         if not (msg.addressed or (in_desk and asks_free)):
             return
         if asks_free or "free" in text:
