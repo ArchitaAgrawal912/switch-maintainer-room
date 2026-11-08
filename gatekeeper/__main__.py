@@ -86,6 +86,15 @@ def _quiet_resets(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     loop.default_exception_handler(context)
 
 
+async def cmd_ledger(cfg: config.Config) -> None:
+    """Print the assignment ledger: every decision, who made it and why."""
+    state = State(cfg.state_file)
+    if not state.ledger:
+        print("The ledger is empty.")
+    for e in reversed(state.ledger):
+        print(f"{e['time']}  {e['action']:<18} {e['subject']:<8} {e['who'] or '-':<18} by {e['by']}: {e['reason']}")
+
+
 async def cmd_run(cfg: config.Config) -> None:
     asyncio.get_running_loop().set_exception_handler(_quiet_resets)
     _need(cfg.maintainers_room, "MAINTAINERS_ROOM_ID")
@@ -128,6 +137,7 @@ def main() -> None:
     sub.add_parser("rooms", help="list rooms and agents the Gatekeeper can see")
     sub.add_parser("setup", help="create the maintainers/reviews/contributors rooms and write their ids to .env")
     sub.add_parser("scan", help="dry run: poll GitHub once and print proposals")
+    sub.add_parser("ledger", help="print the assignment ledger")
     sub.add_parser("run", help="connect to Switch and run")
     args = ap.parse_args()
 
@@ -138,7 +148,7 @@ def main() -> None:
         creds = register(cfg.switch_url, _need(cfg.registration_token, "SWITCH_REGISTRATION_TOKEN"), cfg.agent_name, cfg.agent_file, args.overwrite)
         print(f"Registered '{cfg.agent_name}' as {creds['agent_id']}. Key saved to {cfg.agent_file.name} (keep it secret).")
         return
-    asyncio.run({"ops": cmd_ops, "rooms": cmd_rooms, "setup": cmd_setup, "scan": cmd_scan, "run": cmd_run}[args.cmd](cfg))
+    asyncio.run({"ops": cmd_ops, "rooms": cmd_rooms, "setup": cmd_setup, "scan": cmd_scan, "ledger": cmd_ledger, "run": cmd_run}[args.cmd](cfg))
 
 
 if __name__ == "__main__":
